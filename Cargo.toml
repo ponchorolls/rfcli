@@ -10,3 +10,4 @@ skim = "0.10"
 ollama-rs = "0.1" # For the TLDR functionality
 tokio = { version = "1", features = ["full"] }
 colored = "2.0"
+regex = "1.10"
