@@ -3,7 +3,7 @@ use skim::prelude::*;
 use regex::Regex;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
-use colored::Colorize; // Necessary for .bold().cyan()
+use colored::Colorize; 
 use std::process::{Command, Stdio};
 use std::io::Write;
 use std::io::Cursor;
@@ -23,7 +23,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Search and read an RFC
-    Read,
+    Read {
+        /// Force update the local RFC index
+        #[arg(short, long)]
+        refresh: bool,
+    },
     /// Get a summarized TLDR of an RFC
     Tldr { number: u32 },
 }
@@ -33,8 +37,8 @@ async fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-    Commands::Read => {
-        if let Some(rfc_num) = fuzzy_select_rfc() {
+    Commands::Read { refresh} => {
+        if let Some(rfc_num) = fuzzy_select_rfc(*refresh) {
             println!("Fetching RFC {}...", rfc_num);
             match fetch_rfc(rfc_num).await {
                 Ok(content) => {
@@ -105,33 +109,76 @@ fn clean_rfc_text(raw_text: &str) -> String {
 //     })
 // }
 
-fn fuzzy_select_rfc() -> Option<u32> {
-    let cache_dir = dirs::cache_dir()
-    .unwrap_or_else(|| std::env::current_dir().unwrap())
-    .join("rfcli");
+// fn fuzzy_select_rfc() -> Option<u32> {
+//     let cache_dir = dirs::cache_dir()
+//     .unwrap_or_else(|| std::env::current_dir().unwrap())
+//     .join("rfcli");
+//     let index_path = cache_dir.join("rfc-index.txt");
+
+//     // Create cache directory if missing
+//     if !cache_dir.exists() {
+//         fs::create_dir_all(&cache_dir).ok()?;
+//     }
+
+//         // Download index if missing
+//     if !index_path.exists() {
+//         println!("Downloading RFC index (one-time setup)...");
+//         let response = reqwest::blocking::get("https://www.rfc-editor.org/rfc/rfc-index.txt").ok()?;
+//         let content = response.text().ok()?;
+//         fs::write(&index_path, content).ok()?;
+//     }
+
+//     let index_data = fs::read_to_string(index_path).ok()?;
+//     let filtered_index: String = index_data.lines()
+//         .filter(|line| line.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+//         .collect::<Vec<_>>()
+//         .join("\n");
+    
+//     // We filter the index to find lines that look like "0791 Internet Protocol..."
+//     // Standard RFC index lines start with a 4-digit number.
+//     let item_reader = SkimItemReader::default();
+//     let items = item_reader.of_bufread(Cursor::new(filtered_index));
+
+//     let options = SkimOptionsBuilder::default()
+//         .height(Some("50%"))
+//         .multi(false)
+//         .build()
+//         .unwrap();
+
+//     let selected_items = Skim::run_with(&options, Some(items))
+//         .map(|out| out.selected_items)
+//         .unwrap_or_else(|| Vec::new());
+
+//     selected_items.first().and_then(|item| {
+//         // Extract the first contiguous digits as the RFC number
+//         let text = item.output();
+//         text.split_whitespace().next()?.parse::<u32>().ok()
+//     })
+// }
+fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
+    let cache_dir = dirs::cache_dir()?.join("rfcli");
     let index_path = cache_dir.join("rfc-index.txt");
 
-    // Create cache directory if missing
     if !cache_dir.exists() {
         fs::create_dir_all(&cache_dir).ok()?;
     }
 
-        // Download index if missing
-    if !index_path.exists() {
-        println!("Downloading RFC index (one-time setup)...");
+    // Download if it doesn't exist OR if user passed the -r flag
+    if !index_path.exists() || force_refresh {
+        println!("{}", "Updating RFC index from IETF...".yellow());
         let response = reqwest::blocking::get("https://www.rfc-editor.org/rfc/rfc-index.txt").ok()?;
         let content = response.text().ok()?;
         fs::write(&index_path, content).ok()?;
+        println!("{}", "Index updated successfully.".green());
     }
 
     let index_data = fs::read_to_string(index_path).ok()?;
+    
     let filtered_index: String = index_data.lines()
         .filter(|line| line.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
         .collect::<Vec<_>>()
         .join("\n");
-    
-    // We filter the index to find lines that look like "0791 Internet Protocol..."
-    // Standard RFC index lines start with a 4-digit number.
+
     let item_reader = SkimItemReader::default();
     let items = item_reader.of_bufread(Cursor::new(filtered_index));
 
@@ -146,9 +193,7 @@ fn fuzzy_select_rfc() -> Option<u32> {
         .unwrap_or_else(|| Vec::new());
 
     selected_items.first().and_then(|item| {
-        // Extract the first contiguous digits as the RFC number
-        let text = item.output();
-        text.split_whitespace().next()?.parse::<u32>().ok()
+        item.output().split_whitespace().next()?.parse::<u32>().ok()
     })
 }
 
