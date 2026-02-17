@@ -1,58 +1,12 @@
-   0.198271738s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: fingerprint error for rfcli v0.1.0 (/home/poncho/projects/rfcli)/Check { test: false }/TargetInner { name: "rfcli", doc: true, ..: with_path("/home/poncho/projects/rfcli/src/main.rs", Edition2021) }
-   0.198305755s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-549a23de7f02ee61/bin-rfcli`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: <E as anyhow::context::ext::StdError>::ext_context
-   1: cargo_util::paths::read
-   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   3: cargo::core::compiler::fingerprint::prepare_target
-   4: cargo::core::compiler::compile
-   5: cargo::core::compiler::build_runner::BuildRunner::compile
-   6: cargo::ops::cargo_compile::compile_ws
-   7: cargo::ops::cargo_compile::compile_with_exec
-   8: cargo::ops::cargo_compile::compile
-   9: cargo::commands::check::exec
-  10: cargo::cli::Exec::exec
-  11: cargo::cli::main
-  12: cargo::main
-  13: std::sys::backtrace::__rust_begin_short_backtrace
-  14: std::rt::lang_start::{{closure}}
-  15: std::rt::lang_start_internal
-  16: main
-  17: __libc_start_call_main
-  18: __libc_start_main_alias_2
-  19: _start
-   0.219319823s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: fingerprint error for rfcli v0.1.0 (/home/poncho/projects/rfcli)/Check { test: true }/TargetInner { name: "rfcli", doc: true, ..: with_path("/home/poncho/projects/rfcli/src/main.rs", Edition2021) }
-   0.219343445s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-de489068321c2bd9/test-bin-rfcli`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: <E as anyhow::context::ext::StdError>::ext_context
-   1: cargo_util::paths::read
-   2: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   3: cargo::core::compiler::fingerprint::prepare_target
-   4: cargo::core::compiler::compile
-   5: cargo::core::compiler::build_runner::BuildRunner::compile
-   6: cargo::ops::cargo_compile::compile_ws
-   7: cargo::ops::cargo_compile::compile_with_exec
-   8: cargo::ops::cargo_compile::compile
-   9: cargo::commands::check::exec
-  10: cargo::cli::Exec::exec
-  11: cargo::cli::main
-  12: cargo::main
-  13: std::sys::backtrace::__rust_begin_short_backtrace
-  14: std::rt::lang_start::{{closure}}
-  15: std::rt::lang_start_internal
-  16: main
-  17: __libc_start_call_main
-  18: __libc_start_main_alias_2
-  19: _start
+   0.210464342s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: stale: changed "/home/poncho/projects/rfcli/src/main.rs"
+   0.210489552s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:           (vs) "/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-77945e4030c4517b/dep-bin-rfcli"
+   0.210503948s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1771349932, nanos: 840541014 } < FileTime { seconds: 1771350018, nanos: 539578217 }
+   0.210716276s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: fingerprint dirty for rfcli v0.1.0 (/home/poncho/projects/rfcli)/Check { test: false }/TargetInner { name: "rfcli", doc: true, ..: with_path("/home/poncho/projects/rfcli/src/main.rs", Edition2021) }
+   0.210741544s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-77945e4030c4517b/dep-bin-rfcli", reference_mtime: FileTime { seconds: 1771349932, nanos: 840541014 }, stale: "/home/poncho/projects/rfcli/src/main.rs", stale_mtime: FileTime { seconds: 1771350018, nanos: 539578217 } }))
+   0.225844821s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: stale: changed "/home/poncho/projects/rfcli/src/main.rs"
+   0.225862279s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:           (vs) "/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-1b0b718850251128/dep-test-bin-rfcli"
+   0.225875588s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1771349932, nanos: 840541014 } < FileTime { seconds: 1771350018, nanos: 539578217 }
+   0.225941755s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint: fingerprint dirty for rfcli v0.1.0 (/home/poncho/projects/rfcli)/Check { test: true }/TargetInner { name: "rfcli", doc: true, ..: with_path("/home/poncho/projects/rfcli/src/main.rs", Edition2021) }
+   0.225955712s  INFO prepare_target{force=false package_id=rfcli v0.1.0 (/home/poncho/projects/rfcli) target="rfcli"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/poncho/projects/rfcli/target/debug/.fingerprint/rfcli-1b0b718850251128/dep-test-bin-rfcli", reference_mtime: FileTime { seconds: 1771349932, nanos: 840541014 }, stale: "/home/poncho/projects/rfcli/src/main.rs", stale_mtime: FileTime { seconds: 1771350018, nanos: 539578217 } }))
     Checking rfcli v0.1.0 (/home/poncho/projects/rfcli)
-error: could not compile `rfcli` (bin "rfcli" test) due to 3 previous errors; 1 warning emitted
-warning: build failed, waiting for other jobs to finish...
-error: could not compile `rfcli` (bin "rfcli") due to 3 previous errors; 1 warning emitted
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s
