@@ -20,7 +20,7 @@
 
           # This hash needs to be updated if you change dependencies in Cargo.toml
           # You can set it to lib.fakeSha256 first, run nix build, and copy the real hash
-          cargoHash = "sha256-VrzWIbBY8/upMnfA6dnRvvBZxTOcsGdGcTO0jfbLXws="; 
+          cargoHash = "sha256-FdnQs2qbDEPGcyCbWpK8YEid+Vx6OfV213YX15HImaQ="; 
 
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs; [ openssl ];
