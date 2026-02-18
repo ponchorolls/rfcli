@@ -76,7 +76,6 @@ async fn main() {
 }
 
 async fn generate_tldr(number: u32, text: &str, model: &str) {
-    let ollama = Ollama::new("http://localhost".to_string(), 11434);
     let ollama = Ollama::default();
     let cleaned_text = clean_rfc_text(text);
     
@@ -226,3 +225,5 @@ fn view_in_pager(content: &str) {
 
     let _ = child.wait();
 }
+
+
