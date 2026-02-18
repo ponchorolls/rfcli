@@ -9,7 +9,7 @@ use std::io::Write;
 use std::io::Cursor;
 use std::fs;
 use std::path::PathBuf;
-
+use indicatif::{ProgressBar, ProgressStyle};
 
 
 #[derive(Parser)]
@@ -29,51 +29,142 @@ enum Commands {
         refresh: bool,
     },
     /// Get a summarized TLDR of an RFC
-    Tldr { number: u32 },
+    Tldr { 
+        number: u32,
+        #[arg(short, long, default_value = "llama3")]
+        model: String 
+    },
 }
 
+// #[tokio::main]
+// async fn main() {
+//     let cli = Cli::parse();
+
+//     match &cli.command {
+//     Commands::Read { refresh } => {
+//     let mut first_run = *refresh; // Only refresh on the first loop if requested
+    
+//     loop {
+//         print!("\x1B[2J\x1B[1;1H");
+//         // 1. Open the fuzzy finder
+//         if let Some(rfc_num) = fuzzy_select_rfc(first_run) {
+//             first_run = false; // Don't force re-downloading on subsequent loops
+            
+//             println!("Fetching RFC {}...", rfc_num);
+            
+//             match fetch_rfc(rfc_num).await {
+//                 Ok(content) => {
+//                     let cleaned = clean_rfc_text(&content);
+//                     // 2. Open the pager. When you hit 'q', it returns here!
+//                     view_in_pager(&cleaned);
+//                 }
+//                 Err(e) => {
+//                     eprintln!("Error: {}", e);
+//                     // Give the user a moment to see the error before looping back
+//                     std::thread::sleep(std::time::Duration::from_secs(2));
+//                 }
+//             }
+//         } else {
+//             // 3. If the user hits Esc or Ctrl+C in skim, it returns None.
+//             // This is our exit condition for the loop.
+//             println!("Exiting rfcli...");
+//             break;
+//         }
+//     }
+//     }
+//         Commands::Tldr { number, model } => {
+//     match fetch_rfc(*number).await {
+//         Ok(content) => generate_tldr(*number, &content, model).await, // Ensure *number is passed
+//         Err(e) => eprintln!("Error: {}", e),
+//     }
+// }
+//     }
+// }
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-    Commands::Read { refresh } => {
-    let mut first_run = *refresh; // Only refresh on the first loop if requested
-    
-    loop {
-        print!("\x1B[2J\x1B[1;1H");
-        // 1. Open the fuzzy finder
-        if let Some(rfc_num) = fuzzy_select_rfc(first_run) {
-            first_run = false; // Don't force re-downloading on subsequent loops
-            
-            println!("Fetching RFC {}...", rfc_num);
-            
-            match fetch_rfc(rfc_num).await {
-                Ok(content) => {
-                    let cleaned = clean_rfc_text(&content);
-                    // 2. Open the pager. When you hit 'q', it returns here!
-                    view_in_pager(&cleaned);
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    // Give the user a moment to see the error before looping back
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+        Commands::Read { refresh } => {
+            let mut first_run = *refresh;
+            loop {
+                // We don't want to clear the screen if we're just printing an error
+                if let Some(rfc_num) = fuzzy_select_rfc(first_run) {
+                    first_run = false;
+                    println!("Fetching RFC {}...", rfc_num);
+                    
+                    match fetch_rfc(rfc_num).await {
+                        Ok(content) => {
+                            let cleaned = clean_rfc_text(&content);
+                            view_in_pager(&cleaned);
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                        }
+                    }
+                } else {
+                    println!("Exiting rfcli...");
+                    break;
                 }
             }
-        } else {
-            // 3. If the user hits Esc or Ctrl+C in skim, it returns None.
-            // This is our exit condition for the loop.
-            println!("Exiting rfcli...");
-            break;
-        }
-    }
-    }
-        Commands::Tldr { number } => {
+        } // Closing brace for Read arm
+        
+        Commands::Tldr { number, model } => {
             match fetch_rfc(*number).await {
-                Ok(content) => generate_tldr(&content).await,
-                Err(e) => eprintln!("Failed to fetch RFC: {}", e),
+                Ok(content) => generate_tldr(*number, &content, model).await,
+                Err(e) => eprintln!("Error: {}", e),
             }
         }
+    }
+}
+
+async fn generate_tldr(number: u32, text: &str, model: &str) {
+    let ollama = Ollama::default();
+    let cleaned_text = clean_rfc_text(text);
+    
+    let abstract_text: String = cleaned_text.lines().take(200).collect::<Vec<_>>().join("\n");
+
+    let security_re = Regex::new(r"(?i)Security Considerations").unwrap();
+    let security_text = if let Some(m) = security_re.find(&cleaned_text) {
+        cleaned_text[m.start()..].lines().take(100).collect::<Vec<_>>().join("\n")
+    } else {
+        "No explicit security considerations section found.".to_string()
+    };
+
+    let prompt = format!(
+        "You are a Senior Systems Engineer. Summarize RFC {}.
+        STRUCTURE:
+        - One sentence 'Elevator Pitch'.
+        - 3-5 Technical Key Points (Bullet points).
+        - A 'Security Impact' section summarizing potential risks.
+        
+        ABSTRACT CONTENT:
+        {}
+        
+        SECURITY SECTION:
+        {}", 
+        number, abstract_text, security_text
+    );
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner()
+        .template("{spinner:.green} {msg}")
+        .unwrap());
+    pb.set_message("Architecting summary...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(120));
+
+    // The actual call
+    let res = ollama.generate(GenerationRequest::new(model.to_string(), prompt)).await;
+
+    pb.finish_and_clear(); 
+
+    match res {
+        Ok(response) => {
+            println!("{}", format!("--- Analyzing RFC {} via {} ---", number, model).bold().cyan());
+            println!("\n{}", response.response);
+        }
+        Err(e) => eprintln!("Error calling Ollama: {}", e),
     }
 }
 
@@ -158,42 +249,93 @@ fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
     }
 }
 
-async fn generate_tldr(text: &str) {
-    let ollama = Ollama::default();
-    let cleaned_text = clean_rfc_text(text);
+// async fn generate_tldr(number: u32, text: &str, model: &str) {
+
+//     let ollama = Ollama::default();
+//     let cleaned_text = clean_rfc_text(text);
     
-    let context_window: String = cleaned_text.lines()
-        .take(300) 
-        .collect::<Vec<&str>>()
-        .join("\n");
+//     // 1. Extract Abstract (usually near the start)
+//     let abstract_text: String = cleaned_text.lines()
+//         .take(200)
+//         .collect::<Vec<_>>()
+//         .join("\n");
 
-    let prompt = format!(
-        "You are an expert networking engineer. Summarize this RFC technical document. \
-         Focus on: \n\
-         1. What problem does it solve?\n\
-         2. Key protocol mechanisms.\n\
-         3. Target use cases.\n\n\
-         Keep it concise and use bullet points.\n\n\
-         RFC Content:\n{}", 
-        context_window
-    );
+//     // 2. Extract Security Considerations (usually near the end)
+//     // We search for the header and take the next 100 lines
+//     let security_re = Regex::new(r"(?i)Security Considerations").unwrap();
+//     let security_text = if let Some(m) = security_re.find(&cleaned_text) {
+//         cleaned_text[m.start()..].lines().take(100).collect::<Vec<_>>().join("\n")
+//     } else {
+//         "No explicit security considerations section found.".to_string()
+//     };
 
-    println!("{}", "--- Generating Summary (Local LLM via Ollama) ---".bold().cyan());
+//     let prompt = format!(
+//         "You are a Senior Systems Engineer. Summarize RFC {}.
+        
+//         STRUCTURE:
+//         - One sentence 'Elevator Pitch'.
+//         - 3-5 Technical Key Points (Bullet points).
+//         - A 'Security Impact' section summarizing potential risks.
+        
+//         ABSTRACT CONTENT:
+//         {}
+        
+//         SECURITY SECTION:
+//         {}", 
+//         number, abstract_text, security_text
+//     );
+//     // Inside generate_tldr...
+//     let pb = ProgressBar::new_spinner();
+//     pb.set_style(ProgressStyle::default_spinner()
+//         .template("{spinner:.green} {msg}")
+//         .unwrap());
+//     pb.set_message("Architecting summary...");
+//     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    let res = ollama
-        .generate(GenerationRequest::new("llama3".to_string(), prompt))
-        .await;
+//     let res = ollama.generate(...).await;
 
-    match res {
-        Ok(response) => {
-            println!("\n{}", "Summary:".bold().green());
-            println!("{}", response.response);
-        }
-        Err(e) => {
-            eprintln!("\n{}: {}", "Error calling Ollama".red().bold(), e);
-        }
-    }
-}
+//     pb.finish_and_clear(); // Remove spinner when done
+
+//     println!("{}", format!("--- Analyzing RFC {} via Llama 3 ---", number).bold().cyan());
+    
+//     // ... (rest of the Ollama call logic)
+// }
+// async fn generate_tldr(text: &str) {
+//     let ollama = Ollama::default();
+//     let cleaned_text = clean_rfc_text(text);
+    
+//     let context_window: String = cleaned_text.lines()
+//         .take(300) 
+//         .collect::<Vec<&str>>()
+//         .join("\n");
+
+//     let prompt = format!(
+//         "You are an expert networking engineer. Summarize this RFC technical document. \
+//          Focus on: \n\
+//          1. What problem does it solve?\n\
+//          2. Key protocol mechanisms.\n\
+//          3. Target use cases.\n\n\
+//          Keep it concise and use bullet points.\n\n\
+//          RFC Content:\n{}", 
+//         context_window
+//     );
+
+//     println!("{}", "--- Generating Summary (Local LLM via Ollama) ---".bold().cyan());
+
+//     let res = ollama
+//         .generate(GenerationRequest::new("llama3".to_string(), prompt))
+//         .await;
+
+//     match res {
+//         Ok(response) => {
+//             println!("\n{}", "Summary:".bold().green());
+//             println!("{}", response.response);
+//         }
+//         Err(e) => {
+//             eprintln!("\n{}: {}", "Error calling Ollama".red().bold(), e);
+//         }
+//     }
+// }
 
 fn view_in_pager(content: &str) {
     // We pass -K directly to the pager command
