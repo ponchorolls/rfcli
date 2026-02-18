@@ -37,18 +37,36 @@ async fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-    Commands::Read { refresh} => {
-        if let Some(rfc_num) = fuzzy_select_rfc(*refresh) {
+    Commands::Read { refresh } => {
+    let mut first_run = *refresh; // Only refresh on the first loop if requested
+    
+    loop {
+        print!("\x1B[2J\x1B[1;1H");
+        // 1. Open the fuzzy finder
+        if let Some(rfc_num) = fuzzy_select_rfc(first_run) {
+            first_run = false; // Don't force re-downloading on subsequent loops
+            
             println!("Fetching RFC {}...", rfc_num);
+            
             match fetch_rfc(rfc_num).await {
                 Ok(content) => {
-                    // Clean it first so the headers/footers don't clutter the view
                     let cleaned = clean_rfc_text(&content);
+                    // 2. Open the pager. When you hit 'q', it returns here!
                     view_in_pager(&cleaned);
                 }
-                Err(e) => eprintln!("Failed to fetch RFC: {}", e),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    // Give the user a moment to see the error before looping back
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
             }
+        } else {
+            // 3. If the user hits Esc or Ctrl+C in skim, it returns None.
+            // This is our exit condition for the loop.
+            println!("Exiting rfcli...");
+            break;
         }
+    }
     }
         Commands::Tldr { number } => {
             match fetch_rfc(*number).await {
@@ -61,11 +79,6 @@ async fn main() {
 
 // --- Logic Functions ---
 
-// async fn fetch_rfc(number: u32) -> Result<String, reqwest::Error> {
-//     let url = format!("https://www.rfc-editor.org/rfc/rfc{}.txt", number);
-//     // Use the async client
-//     reqwest::get(url).await?.text().await
-// }
 async fn fetch_rfc(number: u32) -> Result<String, Box<dyn std::error::Error>> {
     let cache_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -95,66 +108,6 @@ fn clean_rfc_text(raw_text: &str) -> String {
     multi_space_re.replace_all(&cleaned, "\n\n").to_string()
 }
 
-// fn fuzzy_select_rfc() -> Option<u32> {
-//     let options = "791: Internet Protocol\n2616: HTTP/1.1\n1035: DNS";
-//     let item_reader = SkimItemReader::default();
-//     let items = item_reader.of_bufread(Cursor::new(options));
-
-//     let selected_items = Skim::run_with(&SkimOptionsBuilder::default().build().unwrap(), Some(items))
-//         .map(|out| out.selected_items)
-//         .unwrap_or_else(|| Vec::new());
-
-//     selected_items.first().and_then(|item| {
-//         item.output().split(':').next()?.parse::<u32>().ok()
-//     })
-// }
-
-// fn fuzzy_select_rfc() -> Option<u32> {
-//     let cache_dir = dirs::cache_dir()
-//     .unwrap_or_else(|| std::env::current_dir().unwrap())
-//     .join("rfcli");
-//     let index_path = cache_dir.join("rfc-index.txt");
-
-//     // Create cache directory if missing
-//     if !cache_dir.exists() {
-//         fs::create_dir_all(&cache_dir).ok()?;
-//     }
-
-//         // Download index if missing
-//     if !index_path.exists() {
-//         println!("Downloading RFC index (one-time setup)...");
-//         let response = reqwest::blocking::get("https://www.rfc-editor.org/rfc/rfc-index.txt").ok()?;
-//         let content = response.text().ok()?;
-//         fs::write(&index_path, content).ok()?;
-//     }
-
-//     let index_data = fs::read_to_string(index_path).ok()?;
-//     let filtered_index: String = index_data.lines()
-//         .filter(|line| line.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-//         .collect::<Vec<_>>()
-//         .join("\n");
-    
-//     // We filter the index to find lines that look like "0791 Internet Protocol..."
-//     // Standard RFC index lines start with a 4-digit number.
-//     let item_reader = SkimItemReader::default();
-//     let items = item_reader.of_bufread(Cursor::new(filtered_index));
-
-//     let options = SkimOptionsBuilder::default()
-//         .height(Some("50%"))
-//         .multi(false)
-//         .build()
-//         .unwrap();
-
-//     let selected_items = Skim::run_with(&options, Some(items))
-//         .map(|out| out.selected_items)
-//         .unwrap_or_else(|| Vec::new());
-
-//     selected_items.first().and_then(|item| {
-//         // Extract the first contiguous digits as the RFC number
-//         let text = item.output();
-//         text.split_whitespace().next()?.parse::<u32>().ok()
-//     })
-// }
 fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
     let cache_dir = dirs::cache_dir()?.join("rfcli");
     let index_path = cache_dir.join("rfc-index.txt");
@@ -185,16 +138,24 @@ fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
     let options = SkimOptionsBuilder::default()
         .height(Some("50%"))
         .multi(false)
+        .bind(vec!["esc:abort", "ctrl-c:abort"]) // Force Bind
         .build()
         .unwrap();
 
-    let selected_items = Skim::run_with(&options, Some(items))
-        .map(|out| out.selected_items)
-        .unwrap_or_else(|| Vec::new());
+    let output = Skim::run_with(&options, Some(items));
 
-    selected_items.first().and_then(|item| {
-        item.output().split_whitespace().next()?.parse::<u32>().ok()
-    })
+    // Check if the user aborted (pressed ESC)
+    if let Some(out) = output {
+        if out.final_event == Event::EvActAbort {
+            return None; // This will trigger the 'break' in your loop
+        }
+        
+        out.selected_items.first().and_then(|item| {
+            item.output().split_whitespace().next()?.parse::<u32>().ok()
+        })
+    } else {
+        None
+    }
 }
 
 async fn generate_tldr(text: &str) {
@@ -235,25 +196,24 @@ async fn generate_tldr(text: &str) {
 }
 
 fn view_in_pager(content: &str) {
-    // Check if 'bat' exists, otherwise use 'less'
-    let pager_cmd = if Command::new("bat").arg("--version").stdout(Stdio::null()).status().is_ok() {
-        "bat"
+    // We pass -K directly to the pager command
+    let (cmd, args) = if Command::new("bat").arg("--version").stdout(Stdio::null()).status().is_ok() {
+        ("bat", vec!["--paging=always", "--pager=less -K"])
     } else {
-        "less"
+        ("less", vec!["-K"])
     };
 
-    let mut child = Command::new(pager_cmd)
+    let mut child = Command::new(cmd)
+        .args(args)
         .stdin(Stdio::piped())
         .spawn()
         .expect("Failed to spawn pager");
 
     if let Some(mut stdin) = child.stdin.take() {
-        // We use a separate thread or just write it out if it's not massive
-        if let Err(e) = stdin.write_all(content.as_bytes()) {
-            eprintln!("Error writing to pager: {}", e);
-        }
+        let _ = stdin.write_all(content.as_bytes());
     }
 
     let _ = child.wait();
 }
+
 
