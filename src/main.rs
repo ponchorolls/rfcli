@@ -225,5 +225,3 @@ fn view_in_pager(content: &str) {
 
     let _ = child.wait();
 }
-
-
