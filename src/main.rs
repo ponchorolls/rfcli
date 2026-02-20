@@ -1,8 +1,6 @@
 use clap::{Parser, Subcommand};
 use skim::prelude::*;
 use regex::Regex;
-use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::Ollama;
 use colored::Colorize; 
 use std::process::{Command, Stdio};
 use std::io::Write;
@@ -10,6 +8,8 @@ use std::io::Cursor;
 use std::fs;
 use std::path::PathBuf;
 use indicatif::{ProgressBar, ProgressStyle};
+use serde_json::json;
+use textwrap::{wrap, Options};
 
 
 #[derive(Parser)]
@@ -32,9 +32,9 @@ enum Commands {
     },
     /// Get a summarized TLDR of an RFC
     Tldr { 
-        number: u32,
-        #[arg(short, long, default_value = "llama3")]
-        model: String 
+        number: Option<u32>,
+        #[arg(short, long, default_value = "llama-3.1-8b-instant")]
+        model: String
     },
 }
 
@@ -69,64 +69,108 @@ async fn main() {
             }
         } // Closing brace for Read arm
         
-        Commands::Tldr { number, model } => {
-            match fetch_rfc(*number).await {
-                Ok(content) => generate_tldr(*number, &content, model).await,
-                Err(e) => eprintln!("Error: {}", e),
-            }
-        }
-    }
-}
-
-async fn generate_tldr(number: u32, text: &str, model: &str) {
-    let ollama = Ollama::default();
-    let cleaned_text = clean_rfc_text(text);
-    
-    // INTEL OPTIMIZATION: Take only the first 80 lines (Abstract)
-    let abstract_text: String = cleaned_text.lines().take(80).collect::<Vec<_>>().join("\n");
-
-    // Search for Security, but only grab 30 lines
-    let security_re = Regex::new(r"(?i)Security Considerations").unwrap();
-    let security_text = if let Some(m) = security_re.find(&cleaned_text) {
-        cleaned_text[m.start()..].lines().take(30).collect::<Vec<_>>().join("\n")
-    } else {
-        "N/A".to_string()
+        Commands::Tldr { number, model} => {
+            // 1. Determine the number: use the argument if provided, otherwise search
+    let target_number = match number {
+        Some(n) => Some(*n),
+        None => fuzzy_select_rfc(false, None), // Use our existing search!
     };
 
-    let prompt = format!(
-        "Briefly summarize RFC {}. One sentence pitch, 3 technical bullets, one security risk. \
-        \n\nABS: {}\n\nSEC: {}", 
-        number, abstract_text, security_text
-    );
+    // 2. If we have a number (either from arg or search), proceed
+    if let Some(n) = target_number {
+        match fetch_rfc(n).await {
+            Ok(content) => generate_tldr(n, &content, model).await,
+            Err(e) => eprintln!("Error fetching RFC {}: {}", n, e),
+        }
+    } else {
+        println!("No RFC selected. Exiting...");
+    }
+}
+}
+async fn generate_tldr(number: u32, text: &str, model: &str) {
+    let api_key = std::env::var("GROQ_API_KEY")
+        .expect("Please set the GROQ_API_KEY environment variable");
+
+    let cleaned_text = clean_rfc_text(text);
+    let context = cleaned_text.lines().take(300).collect::<Vec<_>>().join("\n");
 
     let pb = ProgressBar::new_spinner();
-    // Custom message to remind you it's a CPU-heavy task
-    pb.set_message("CPU is crunching numbers (this may take 10-20s)...");
+    pb.set_style(ProgressStyle::default_spinner()
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        .template("{spinner:.magenta} {msg}")
+        .unwrap());
+    pb.set_message("Querying Groq Cloud...");
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    let res = ollama
-        .generate(GenerationRequest::new(model.to_string(), prompt))
+    let client = reqwest::Client::new();
+    let res = client
+        .post("https://api.groq.com/openai/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&json!({
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a Senior Systems Engineer. Summarize the RFC for a terminal UI. DO NOT use Markdown bolding (no asterisks). Use a simple 'TITLE: description' format for bullets. Keep the elevator pitch at the top."
+                },
+                {
+                    "role": "user",
+                    "content": format!("Summarize RFC {}:\n\n{}", number, context)
+                }
+            ]
+        }))
+        .send()
         .await;
 
     pb.finish_and_clear();
-    // let pb = ProgressBar::new_spinner();
-    // pb.set_style(ProgressStyle::default_spinner()
-    //     .template("{spinner:.green} {msg}")
-    //     .unwrap());
-    // pb.set_message("Architecting summary...");
-    // pb.enable_steady_tick(std::time::Duration::from_millis(120));
-
-    // // The actual call
-    // let res = ollama.generate(GenerationRequest::new(model.to_string(), prompt)).await;
-
-    // pb.finish_and_clear(); 
 
     match res {
         Ok(response) => {
-            println!("{}", format!("--- Analyzing RFC {} via {} ---", number, model).bold().cyan());
-            println!("\n{}", response.response);
+            let body = response.text().await.unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            
+            // The 'if let' block now contains all the printing logic to keep 'summary' in scope
+            if let Some(summary_text) = v["choices"][0]["message"]["content"].as_str() {
+                // 1. Detect terminal width (defaults to 80 if it can't detect)
+                let term_width = termsize::get().map(|t| t.cols as usize).unwrap_or(80);
+                // 2. Set wrapping options (leaving a little margin for our box/indent)
+                let wrap_options = Options::new(term_width - 6);
+
+                println!("\n{}", "╭──────────────────────────────────────────────────────────╮".cyan().bold());
+                println!("  {} {} {}", "🚀".bold(), "RFC".bold(), number.to_string().bold().yellow());
+                println!("{}", "╰──────────────────────────────────────────────────────────╯".cyan().bold());
+                
+                for line in summary_text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() { continue; }
+
+                    // Skip conversational filler from the AI
+                    let lower = trimmed.to_lowercase();
+                    if lower.starts_with("here is") || lower.contains("summary of rfc") {
+                        continue;
+                    }
+
+                    // Clean and print with high contrast for the X220 screen
+                    let clean_line = trimmed.replace("**", "");
+                    // 3. Wrap the cleaned line
+                    let wrapped_lines = wrap(&clean_line, &wrap_options);
+
+                    for (i, wrapped) in wrapped_lines.iter().enumerate() {
+                        if i == 0 && (clean_line.starts_with('*') || clean_line.starts_with('-')) {
+                            // First line of a bullet point gets the bullet
+                            println!("  {} {}", "•".cyan().bold(), wrapped[1..].trim().white().bold());
+                        } else {
+                            // Subsequent wrapped lines are indented to match
+                            println!("    {}", wrapped.white().bold());
+                        }
+                    }
+                }
+            } else {
+                eprintln!("{}: API response did not contain a summary.", "Error".red());
+                println!("Debug: {}", body);
+            }
         }
-        Err(e) => eprintln!("Error calling Ollama: {}", e),
+        Err(e) => eprintln!("{}: {}", "Network Error".red(), e),
     }
 }
 
@@ -201,14 +245,6 @@ fn fuzzy_select_rfc(force_refresh: bool, query: Option<String>) -> Option<u32> {
 
     let options = options_builder.build().unwrap();
     let output = Skim::run_with(&options, Some(items));
-    // let options = SkimOptionsBuilder::default()
-    //     .height(Some("50%"))
-    //     .multi(false)
-    //     .bind(vec!["esc:abort", "ctrl-c:abort"]) // Force Bind
-    //     .build()
-    //     .unwrap();
-
-    // let output = Skim::run_with(&options, Some(items));
 
     // Check if the user aborted (pressed ESC)
     if let Some(out) = output {
@@ -247,47 +283,4 @@ fn view_in_pager(content: &str) {
 
     let _ = child.wait();
 }
-
-// fn view_in_pager(content: &str) {
-//     // -l man: Use the manpage syntax highlighter
-//     // -p: Plain mode (no grid/header)
-//     // -K: (Passed to less) Quit on ESC/Ctrl+C
-//     let mut child = Command::new("bat")
-//         .args(["-l", "man", "-p", "--pager", "less -FK"])
-//         .stdin(Stdio::piped())
-//         .spawn()
-//         .unwrap_or_else(|_| {
-//             Command::new("less")
-//                 .arg("-FK")
-//                 .stdin(Stdio::piped())
-//                 .spawn()
-//                 .expect("Failed to spawn pager")
-//         });
-
-//     if let Some(mut stdin) = child.stdin.take() {
-//         let _ = stdin.write_all(content.as_bytes());
-//     }
-
-//     let _ = child.wait();
-// }
-
-// fn view_in_pager(content: &str) {
-//     // We pass -K directly to the pager command
-//     let (cmd, args) = if Command::new("bat").arg("--version").stdout(Stdio::null()).status().is_ok() {
-//         ("bat", vec!["--paging=always", "--pager=less -K"])
-//     } else {
-//         ("less", vec!["-K"])
-//     };
-
-//     let mut child = Command::new(cmd)
-//         .args(args)
-//         .stdin(Stdio::piped())
-//         .spawn()
-//         .expect("Failed to spawn pager");
-
-//     if let Some(mut stdin) = child.stdin.take() {
-//         let _ = stdin.write_all(content.as_bytes());
-//     }
-
-//     let _ = child.wait();
-// }
+}
