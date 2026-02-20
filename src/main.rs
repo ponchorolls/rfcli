@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use textwrap::{wrap, Options};
+use inquire::{Select, CustomType};
 
 
 #[derive(Parser)]
@@ -17,7 +18,7 @@ use textwrap::{wrap, Options};
 #[command(about = "A fast RFC reader with fuzzy search and TLDR", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -42,51 +43,76 @@ enum Commands {
 async fn main() {
     let cli = Cli::parse();
 
-    match &cli.command {
-        Commands::Read { refresh, query } => {
-            let mut first_run = *refresh;
-            let mut initial_query = query.clone();
-            loop {
-                // We don't want to clear the screen if we're just printing an error
-                if let Some(rfc_num) = fuzzy_select_rfc(first_run, initial_query.take()) {
-                    first_run = false;
-                    println!("Fetching RFC {}...", rfc_num);
-                    
-                    match fetch_rfc(rfc_num).await {
-                        Ok(content) => {
-                            let cleaned = clean_rfc_text(&content);
-                            view_in_pager(&cleaned);
+    match cli.command {
+        // Step 1: There IS a command
+        Some(cmd) => match cmd {
+            Commands::Read { refresh, query } => {
+                // ... your read logic ...
+                let mut first_run = refresh;
+                let mut q = query;
+                loop {
+                    if let Some(num) = fuzzy_select_rfc(first_run, q.take()) {
+                        first_run = false;
+                        if let Ok(content) = fetch_rfc(num).await {
+                            view_in_pager(&content);
                         }
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                        }
-                    }
-                } else {
-                    println!("Exiting rfcli...");
-                    break;
+                    } else { break; }
                 }
             }
-        } // Closing brace for Read arm
-        
-        Commands::Tldr { number, model} => {
-            // 1. Determine the number: use the argument if provided, otherwise search
-    let target_number = match number {
-        Some(n) => Some(*n),
-        None => fuzzy_select_rfc(false, None), // Use our existing search!
-    };
-
-    // 2. If we have a number (either from arg or search), proceed
-    if let Some(n) = target_number {
-        match fetch_rfc(n).await {
-            Ok(content) => generate_tldr(n, &content, model).await,
-            Err(e) => eprintln!("Error fetching RFC {}: {}", n, e),
+            Commands::Tldr { number, model } => {
+                match number {
+                    Some(n) => {
+                        if let Ok(content) = fetch_rfc(n).await {
+                            generate_tldr(n, &content, &model).await;
+                        }
+                    }
+                    None => interactive_mode().await,
+                }
+            }
+        },
+        // Step 2: There is NO command (user just ran `rfcli`)
+        None => {
+            interactive_mode().await;
         }
-    } else {
-        println!("No RFC selected. Exiting...");
     }
 }
+
+async fn interactive_mode() {
+    let mut initial_run = true;
+    
+    loop {
+        // 1. Search for an RFC
+        if let Some(rfc_num) = fuzzy_select_rfc(false, None) {
+            
+            // 2. Ask: Read or TLDR?
+            let options = vec!["Read Full RFC", "Get AI Summary", "Exit"];
+            let ans = Select::new("What would you like to do?", options).prompt();
+
+            match ans {
+                Ok("Read Full RFC") => {
+                    if let Ok(content) = fetch_rfc(rfc_num).await {
+                        view_in_pager(&content);
+                    }
+                }
+                Ok("Get AI Summary") => {
+                    if let Ok(content) = fetch_rfc(rfc_num).await {
+                        // Use your default cloud model
+                        generate_tldr(rfc_num, &content, "llama-3.1-8b-instant").await;
+                    }
+                }
+                _ => break, // Exit or Error
+            }
+
+            // 3. Ask if they want to search again
+            let again = Select::new("Done!", vec!["Search Again", "Exit"]).prompt();
+            if let Ok("Exit") = again { break; }
+            
+        } else {
+            break; // User hit Esc in fuzzy search
+        }
+    }
 }
+
 async fn generate_tldr(number: u32, text: &str, model: &str) {
     let api_key = std::env::var("GROQ_API_KEY")
         .expect("Please set the GROQ_API_KEY environment variable");
@@ -282,5 +308,4 @@ fn view_in_pager(content: &str) {
     }
 
     let _ = child.wait();
-}
 }
