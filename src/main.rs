@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use textwrap::{wrap, Options};
-use inquire::{Select, CustomType};
+use inquire::Select;
 
 
 #[derive(Parser)]
@@ -78,7 +78,7 @@ async fn main() {
 }
 
 async fn interactive_mode() {
-    let mut initial_run = true;
+    let _initial_run = true;
     
     loop {
         // 1. Search for an RFC
@@ -113,7 +113,7 @@ async fn interactive_mode() {
     }
 }
 
-async fn generate_tldr(number: u32, text: &str, model: &str) {
+async fn generate_tldr(number: u32, text: &str, _model: &str) {
     let api_key = std::env::var("GROQ_API_KEY")
         .expect("Please set the GROQ_API_KEY environment variable");
 
