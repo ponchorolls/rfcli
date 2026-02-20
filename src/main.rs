@@ -27,6 +27,8 @@ enum Commands {
         /// Force update the local RFC index
         #[arg(short, long)]
         refresh: bool,
+        #[arg(short, long)]
+        query: Option<String>,
     },
     /// Get a summarized TLDR of an RFC
     Tldr { 
@@ -41,11 +43,12 @@ async fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Read { refresh } => {
+        Commands::Read { refresh, query } => {
             let mut first_run = *refresh;
+            let mut initial_query = query.clone();
             loop {
                 // We don't want to clear the screen if we're just printing an error
-                if let Some(rfc_num) = fuzzy_select_rfc(first_run) {
+                if let Some(rfc_num) = fuzzy_select_rfc(first_run, initial_query.take()) {
                     first_run = false;
                     println!("Fetching RFC {}...", rfc_num);
                     
@@ -79,41 +82,44 @@ async fn generate_tldr(number: u32, text: &str, model: &str) {
     let ollama = Ollama::default();
     let cleaned_text = clean_rfc_text(text);
     
-    let abstract_text: String = cleaned_text.lines().take(200).collect::<Vec<_>>().join("\n");
+    // INTEL OPTIMIZATION: Take only the first 80 lines (Abstract)
+    let abstract_text: String = cleaned_text.lines().take(80).collect::<Vec<_>>().join("\n");
 
+    // Search for Security, but only grab 30 lines
     let security_re = Regex::new(r"(?i)Security Considerations").unwrap();
     let security_text = if let Some(m) = security_re.find(&cleaned_text) {
-        cleaned_text[m.start()..].lines().take(100).collect::<Vec<_>>().join("\n")
+        cleaned_text[m.start()..].lines().take(30).collect::<Vec<_>>().join("\n")
     } else {
-        "No explicit security considerations section found.".to_string()
+        "N/A".to_string()
     };
 
     let prompt = format!(
-        "You are a Senior Systems Engineer. Summarize RFC {}.
-        STRUCTURE:
-        - One sentence 'Elevator Pitch'.
-        - 3-5 Technical Key Points (Bullet points).
-        - A 'Security Impact' section summarizing potential risks.
-        
-        ABSTRACT CONTENT:
-        {}
-        
-        SECURITY SECTION:
-        {}", 
+        "Briefly summarize RFC {}. One sentence pitch, 3 technical bullets, one security risk. \
+        \n\nABS: {}\n\nSEC: {}", 
         number, abstract_text, security_text
     );
 
     let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::default_spinner()
-        .template("{spinner:.green} {msg}")
-        .unwrap());
-    pb.set_message("Architecting summary...");
+    // Custom message to remind you it's a CPU-heavy task
+    pb.set_message("CPU is crunching numbers (this may take 10-20s)...");
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-    // The actual call
-    let res = ollama.generate(GenerationRequest::new(model.to_string(), prompt)).await;
+    let res = ollama
+        .generate(GenerationRequest::new(model.to_string(), prompt))
+        .await;
 
-    pb.finish_and_clear(); 
+    pb.finish_and_clear();
+    // let pb = ProgressBar::new_spinner();
+    // pb.set_style(ProgressStyle::default_spinner()
+    //     .template("{spinner:.green} {msg}")
+    //     .unwrap());
+    // pb.set_message("Architecting summary...");
+    // pb.enable_steady_tick(std::time::Duration::from_millis(120));
+
+    // // The actual call
+    // let res = ollama.generate(GenerationRequest::new(model.to_string(), prompt)).await;
+
+    // pb.finish_and_clear(); 
 
     match res {
         Ok(response) => {
@@ -155,7 +161,7 @@ fn clean_rfc_text(raw_text: &str) -> String {
     multi_space_re.replace_all(&cleaned, "\n\n").to_string()
 }
 
-fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
+fn fuzzy_select_rfc(force_refresh: bool, query: Option<String>) -> Option<u32> {
     let cache_dir = dirs::cache_dir()?.join("rfcli");
     let index_path = cache_dir.join("rfc-index.txt");
 
@@ -182,14 +188,27 @@ fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
     let item_reader = SkimItemReader::default();
     let items = item_reader.of_bufread(Cursor::new(filtered_index));
 
-    let options = SkimOptionsBuilder::default()
+    let mut options_builder = SkimOptionsBuilder::default();
+    options_builder
         .height(Some("50%"))
         .multi(false)
-        .bind(vec!["esc:abort", "ctrl-c:abort"]) // Force Bind
-        .build()
-        .unwrap();
+        .bind(vec!["esc:abort", "ctrl-c:abort"]);
 
+    // If a query was provided, set it as the initial search text
+    if let Some(ref q) = query {
+        options_builder.query(Some(q));
+    }
+
+    let options = options_builder.build().unwrap();
     let output = Skim::run_with(&options, Some(items));
+    // let options = SkimOptionsBuilder::default()
+    //     .height(Some("50%"))
+    //     .multi(false)
+    //     .bind(vec!["esc:abort", "ctrl-c:abort"]) // Force Bind
+    //     .build()
+    //     .unwrap();
+
+    // let output = Skim::run_with(&options, Some(items));
 
     // Check if the user aborted (pressed ESC)
     if let Some(out) = output {
@@ -200,17 +219,20 @@ fn fuzzy_select_rfc(force_refresh: bool) -> Option<u32> {
         out.selected_items.first().and_then(|item| {
             item.output().split_whitespace().next()?.parse::<u32>().ok()
         })
+
+        
     } else {
         None
     }
 }
 
+// Ensure there is only ONE argument here: content
 fn view_in_pager(content: &str) {
-    // We pass -K directly to the pager command
     let (cmd, args) = if Command::new("bat").arg("--version").stdout(Stdio::null()).status().is_ok() {
-        ("bat", vec!["--paging=always", "--pager=less -K"])
+        // We use the 'man' language and 'plain' flags for those nice colors
+        ("bat", vec!["-l", "man", "-p", "--pager", "less -FK"])
     } else {
-        ("less", vec!["-K"])
+        ("less", vec!["-FK"])
     };
 
     let mut child = Command::new(cmd)
@@ -225,3 +247,47 @@ fn view_in_pager(content: &str) {
 
     let _ = child.wait();
 }
+
+// fn view_in_pager(content: &str) {
+//     // -l man: Use the manpage syntax highlighter
+//     // -p: Plain mode (no grid/header)
+//     // -K: (Passed to less) Quit on ESC/Ctrl+C
+//     let mut child = Command::new("bat")
+//         .args(["-l", "man", "-p", "--pager", "less -FK"])
+//         .stdin(Stdio::piped())
+//         .spawn()
+//         .unwrap_or_else(|_| {
+//             Command::new("less")
+//                 .arg("-FK")
+//                 .stdin(Stdio::piped())
+//                 .spawn()
+//                 .expect("Failed to spawn pager")
+//         });
+
+//     if let Some(mut stdin) = child.stdin.take() {
+//         let _ = stdin.write_all(content.as_bytes());
+//     }
+
+//     let _ = child.wait();
+// }
+
+// fn view_in_pager(content: &str) {
+//     // We pass -K directly to the pager command
+//     let (cmd, args) = if Command::new("bat").arg("--version").stdout(Stdio::null()).status().is_ok() {
+//         ("bat", vec!["--paging=always", "--pager=less -K"])
+//     } else {
+//         ("less", vec!["-K"])
+//     };
+
+//     let mut child = Command::new(cmd)
+//         .args(args)
+//         .stdin(Stdio::piped())
+//         .spawn()
+//         .expect("Failed to spawn pager");
+
+//     if let Some(mut stdin) = child.stdin.take() {
+//         let _ = stdin.write_all(content.as_bytes());
+//     }
+
+//     let _ = child.wait();
+// }
